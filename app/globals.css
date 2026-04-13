@@ -1,0 +1,23 @@
+:root {
+  --bg: #faf9f7;
+  --card-bg: #ffffff;
+  --text: #1a1a1a;
+  --text-secondary: #444;
+  --text-muted: #888;
+  --border: #e8e5e0;
+  --accent: #c0392b;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Source Sans 3', sans-serif;
+  min-height: 100vh;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
