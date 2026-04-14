@@ -8,13 +8,18 @@
   --accent: #c0392b;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Source Sans 3', sans-serif;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
 @keyframes pulse {

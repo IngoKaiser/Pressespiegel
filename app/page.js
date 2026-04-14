@@ -6,167 +6,135 @@ const STORAGE_KEY = 'pressespiegel-sources';
 const CACHE_KEY = 'pressespiegel-cache';
 const CACHE_TTL = 30 * 60 * 1000;
 
-const generateId = () => Math.random().toString(36).slice(2, 10);
-const extractDomain = (url) => {
-  try { return new URL(url).hostname.replace('www.', ''); } catch { return url; }
-};
-const normalizeUrl = (url) => {
-  if (!url.startsWith('http')) url = 'https://' + url;
-  return url;
-};
-const FAVICON = (d) => `https://www.google.com/s2/favicons?domain=${d}&sz=64`;
+const uid = () => Math.random().toString(36).slice(2, 9);
+const dom = (u) => { try { return new URL(u).hostname.replace('www.', ''); } catch { return u; } };
+const norm = (u) => u.startsWith('http') ? u : 'https://' + u;
+const fav = (d) => `https://www.google.com/s2/favicons?domain=${d}&sz=64`;
 
-/* ── Source Pill ── */
-function SourcePill({ source, active, onClick, onRemove }) {
-  const domain = extractDomain(source.url);
+function Pill({ children, active, onClick, style: s }) {
   return (
-    <div onClick={onClick} className="pill" style={{
-      background: active ? 'var(--accent)' : 'var(--card-bg)',
-      color: active ? '#fff' : 'var(--text)',
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 8,
+      padding: '7px 14px', borderRadius: 100,
+      background: active ? '#c0392b' : '#fff',
+      color: active ? '#fff' : '#1a1a1a',
+      fontSize: 13, fontFamily: "'Source Sans 3', sans-serif",
       fontWeight: active ? 600 : 400,
-      border: active ? 'none' : '1px solid var(--border)',
-    }}>
-      <img src={FAVICON(domain)} alt="" style={{ width: 16, height: 16, borderRadius: 4 }}
-        onError={(e) => (e.target.style.display = 'none')} />
-      <span>{source.name || domain}</span>
-      <span onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        style={{ marginLeft: 4, opacity: 0.5, cursor: 'pointer', fontSize: 12 }}>✕</span>
-    </div>
+      border: active ? '2px solid #c0392b' : '1px solid #e8e5e0',
+      cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+      lineHeight: 1.2, transition: 'all 0.15s ease', ...s,
+    }}>{children}</button>
   );
 }
 
-/* ── Article Card ── */
-function ArticleCard({ article, onClick }) {
+function Card({ article, onClick }) {
+  const [h, setH] = useState(false);
   return (
-    <div onClick={onClick} className="article-card">
-      <div className="article-meta">
-        <img src={FAVICON(extractDomain(article.sourceUrl))} alt=""
-          style={{ width: 14, height: 14, borderRadius: 3 }}
-          onError={(e) => (e.target.style.display = 'none')} />
+    <article onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
+      background: '#fff', borderRadius: 14, padding: 'clamp(16px, 3vw, 24px)',
+      cursor: 'pointer', border: h ? '1px solid #c0392b' : '1px solid #e8e5e0',
+      transform: h ? 'translateY(-2px)' : 'none',
+      boxShadow: h ? '0 8px 24px rgba(0,0,0,0.07)' : 'none',
+      transition: 'all 0.2s ease', display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#888', flexWrap: 'wrap' }}>
+        <img src={fav(dom(article.sourceUrl))} alt="" width={14} height={14} style={{ borderRadius: 3, flexShrink: 0 }} onError={(e) => { e.target.style.display = 'none'; }} />
         <span>{article.sourceName}</span>
-        {article.paywall && <span className="paywall-badge">Paywall</span>}
+        {article.paywall && <span style={{ background: '#fff3e0', color: '#e65100', padding: '1px 7px', borderRadius: 100, fontSize: 10, fontWeight: 700 }}>PLUS</span>}
+        {article.pubDate && <span style={{ fontSize: 11, opacity: 0.6 }}>{new Date(article.pubDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
       </div>
-      <h3 className="article-title">{article.title}</h3>
-      {article.summary && <p className="article-summary">{article.summary}</p>}
-    </div>
+      <h3 style={{ margin: 0, fontSize: 'clamp(14px, 2.3vw, 16px)', fontWeight: 700, lineHeight: 1.38, fontFamily: "'Libre Baskerville', serif" }}>{article.title}</h3>
+      {article.summary && <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: '#555', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.summary}</p>}
+    </article>
   );
 }
 
-/* ── Reader View ── */
-function ReaderView({ article, onBack }) {
+function Reader({ article, onBack }) {
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [method, setMethod] = useState('');
 
   useEffect(() => {
-    if (article.paywall) {
-      setLoading(false);
-      setError('Dieser Artikel ist als Premium-Inhalt gekennzeichnet.');
-      return;
-    }
-    let cancelled = false;
+    if (article.paywall) { setLoading(false); setError('Premium-Inhalt.'); return; }
+    let c = false;
     (async () => {
       try {
-        const resp = await fetch('/api/article', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: article.url, title: article.title }),
-        });
-        const data = await resp.json();
-        if (!cancelled) {
-          if (data.error) {
-            setError(data.error + (data.details ? `: ${data.details}` : ''));
-          } else if (data.content?.trim().toUpperCase().startsWith('PAYWALL')) {
-            setError('Dieser Artikel steht hinter einer Paywall.');
-          } else {
-            setContent(data.content);
-          }
+        const r = await fetch('/api/article', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: article.url, title: article.title }) });
+        const d = await r.json();
+        if (!c) {
+          if (d.error) setError(d.error);
+          else if (d.content?.trim().toUpperCase().startsWith('PAYWALL')) setError('Paywall erkannt.');
+          else { setContent(d.content); setMethod(d.method); }
           setLoading(false);
         }
-      } catch (err) {
-        if (!cancelled) { setError(err.message); setLoading(false); }
-      }
+      } catch (e) { if (!c) { setError(e.message); setLoading(false); } }
     })();
-    return () => { cancelled = true; };
+    return () => { c = true; };
   }, [article]);
 
   return (
-    <div className="reader">
-      <button onClick={onBack} className="back-btn">← Zurück zur Übersicht</button>
-
-      <div className="reader-meta">
-        <img src={FAVICON(extractDomain(article.sourceUrl))} alt=""
-          style={{ width: 14, height: 14, borderRadius: 3 }}
-          onError={(e) => (e.target.style.display = 'none')} />
+    <div style={{ maxWidth: 680, margin: '0 auto', padding: 'clamp(16px, 4vw, 32px)' }}>
+      <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 15, fontFamily: "'Source Sans 3', sans-serif", padding: 0, marginBottom: 24 }}>← Zurück</button>
+      <div style={{ fontSize: 12, color: '#888', marginBottom: 10, fontFamily: "'Source Sans 3', sans-serif", display: 'flex', alignItems: 'center', gap: 8 }}>
+        <img src={fav(dom(article.sourceUrl))} alt="" width={14} height={14} style={{ borderRadius: 3 }} onError={(e) => { e.target.style.display = 'none'; }} />
         {article.sourceName}
+        {article.pubDate && <span>· {new Date(article.pubDate).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })}</span>}
       </div>
-
-      <h1 className="reader-title">{article.title}</h1>
-
-      <a href={article.url} target="_blank" rel="noopener noreferrer" className="original-link">
+      <h1 style={{ fontSize: 'clamp(22px, 5vw, 30px)', fontWeight: 700, lineHeight: 1.3, marginBottom: 16, fontFamily: "'Libre Baskerville', serif" }}>{article.title}</h1>
+      <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 10, background: '#c0392b', color: '#fff', fontSize: 14, fontWeight: 600, textDecoration: 'none', fontFamily: "'Source Sans 3', sans-serif", marginBottom: 24 }}>
         Originalseite öffnen ↗
       </a>
-
-      <div className="reader-content">
-        {loading && <div className="loading-text">Artikel wird geladen…</div>}
+      <div style={{ borderTop: '1px solid #e8e5e0', paddingTop: 24 }}>
+        {loading && <div style={{ textAlign: 'center', padding: 60, color: '#888', fontSize: 14, fontFamily: "'Source Sans 3', sans-serif", animation: 'pulse 1.5s ease-in-out infinite' }}>Wird geladen…</div>}
         {error && (
-          <div className="error-box">
+          <div style={{ textAlign: 'center', padding: 40, color: '#e65100', background: '#fff3e0', borderRadius: 12, fontFamily: "'Source Sans 3', sans-serif", fontSize: 15 }}>
             {error}
             <div style={{ marginTop: 16 }}>
-              <a href={article.url} target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-                Auf Originalseite lesen ↗
-              </a>
+              <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: '#c0392b', textDecoration: 'none' }}>Auf Originalseite lesen ↗</a>
             </div>
           </div>
         )}
-        {content && <div className="reader-text">{content}</div>}
+        {content && (
+          <>
+            {method === 'direct-partial' && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: '#fef9e7', border: '1px solid #f9e79f', fontSize: 12, color: '#7d6608', fontFamily: "'Source Sans 3', sans-serif" }}>
+                Nur Teilinhalt extrahiert. <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: '#c0392b' }}>Vollständig auf Originalseite lesen ↗</a>
+              </div>
+            )}
+            <div style={{ fontSize: 'clamp(15px, 2.5vw, 17px)', lineHeight: 1.85, color: '#444', whiteSpace: 'pre-wrap', fontFamily: "'Libre Baskerville', serif" }}>{content}</div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/* ── Add Source Modal ── */
-function AddSourceModal({ onAdd, onClose }) {
+function Modal({ onAdd, onClose }) {
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
-  const inputRef = useRef(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const handleSubmit = () => {
-    if (!url.trim()) return;
-    const normalized = normalizeUrl(url.trim());
-    onAdd({ id: generateId(), url: normalized, name: name.trim() || extractDomain(normalized) });
-    setUrl(''); setName('');
-  };
+  const ref = useRef(null);
+  useEffect(() => { document.body.style.overflow = 'hidden'; ref.current?.focus(); return () => { document.body.style.overflow = ''; }; }, []);
+  const submit = () => { if (!url.trim()) return; const n = norm(url.trim()); onAdd({ id: uid(), url: n, name: name.trim() || dom(n) }); };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ fontFamily: "'Libre Baskerville', serif", marginBottom: 24 }}>
-          Quelle hinzufügen
-        </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div onClick={onClose} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#faf9f7', borderRadius: 18, padding: 'clamp(20px, 4vw, 32px)', width: '100%', maxWidth: 420, border: '1px solid #e8e5e0', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}>
+        <h2 style={{ margin: '0 0 20px', fontSize: 20, fontFamily: "'Libre Baskerville', serif" }}>Quelle hinzufügen</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <label className="input-label">Website-URL *</label>
-            <input ref={inputRef} type="text" value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="z.B. spiegel.de"
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              className="input-field" />
+            <label style={{ display: 'block', fontSize: 13, color: '#888', marginBottom: 6 }}>Website-URL *</label>
+            <input ref={ref} type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="z.B. spiegel.de" onKeyDown={(e) => e.key === 'Enter' && submit()}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '1px solid #e8e5e0', background: '#fff', color: '#1a1a1a', fontSize: 16, fontFamily: "'Source Sans 3', sans-serif", outline: 'none' }} />
           </div>
           <div>
-            <label className="input-label">Anzeigename (optional)</label>
-            <input type="text" value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="z.B. Der Spiegel"
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              className="input-field" />
+            <label style={{ display: 'block', fontSize: 13, color: '#888', marginBottom: 6 }}>Anzeigename (optional)</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="z.B. Der Spiegel" onKeyDown={(e) => e.key === 'Enter' && submit()}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '1px solid #e8e5e0', background: '#fff', color: '#1a1a1a', fontSize: 16, fontFamily: "'Source Sans 3', sans-serif", outline: 'none' }} />
           </div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-            <button onClick={onClose} className="btn-secondary">Abbrechen</button>
-            <button onClick={handleSubmit} className="btn-primary"
-              style={{ opacity: url.trim() ? 1 : 0.5 }}>Hinzufügen</button>
+          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: '12px 0', borderRadius: 10, border: '1px solid #e8e5e0', background: 'transparent', color: '#666', fontSize: 15, fontFamily: "'Source Sans 3', sans-serif", cursor: 'pointer' }}>Abbrechen</button>
+            <button onClick={submit} style={{ flex: 1, padding: '12px 0', borderRadius: 10, border: 'none', background: '#c0392b', color: '#fff', fontSize: 15, fontWeight: 600, fontFamily: "'Source Sans 3', sans-serif", cursor: 'pointer', opacity: url.trim() ? 1 : 0.4 }}>Hinzufügen</button>
           </div>
         </div>
       </div>
@@ -174,351 +142,133 @@ function AddSourceModal({ onAdd, onClose }) {
   );
 }
 
-/* ── Main App ── */
 export default function Home() {
   const [sources, setSources] = useState([]);
   const [articles, setArticles] = useState({});
-  const [activeSource, setActiveSource] = useState('all');
+  const [active, setActive] = useState('all');
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [readerArticle, setReaderArticle] = useState(null);
+  const [modal, setModal] = useState(false);
+  const [reader, setReader] = useState(null);
   const [ready, setReady] = useState(false);
-  const isProcessing = useRef(false);
+  const proc = useRef(false);
 
-  // Load from localStorage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setSources(JSON.parse(saved));
-    } catch {}
-    try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp < CACHE_TTL) setArticles(data);
-      }
-    } catch {}
+    try { const s = localStorage.getItem(STORAGE_KEY); if (s) setSources(JSON.parse(s)); } catch {}
+    try { const c = localStorage.getItem(CACHE_KEY); if (c) { const { d, t } = JSON.parse(c); if (Date.now() - t < CACHE_TTL) setArticles(d); } } catch {}
     setReady(true);
   }, []);
 
-  // Save sources
-  useEffect(() => {
-    if (!ready) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sources)); } catch {}
-  }, [sources, ready]);
+  useEffect(() => { if (ready) try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sources)); } catch {} }, [sources, ready]);
+  useEffect(() => { if (ready && Object.keys(articles).length) try { localStorage.setItem(CACHE_KEY, JSON.stringify({ d: articles, t: Date.now() })); } catch {} }, [articles, ready]);
 
-  // Save article cache
-  useEffect(() => {
-    if (!ready || Object.keys(articles).length === 0) return;
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ data: articles, timestamp: Date.now() }));
-    } catch {}
-  }, [articles, ready]);
-
-  const processQueue = useCallback(async (q) => {
-    if (isProcessing.current || q.length === 0) return;
-    isProcessing.current = true;
-
-    for (const source of q) {
-      setLoading((prev) => ({ ...prev, [source.id]: true }));
-      setErrors((prev) => ({ ...prev, [source.id]: null }));
-
+  const load = useCallback(async (q) => {
+    if (proc.current || !q.length) return;
+    proc.current = true;
+    for (const src of q) {
+      setLoading((p) => ({ ...p, [src.id]: true }));
+      setErrors((p) => ({ ...p, [src.id]: null }));
       try {
-        const resp = await fetch('/api/headlines', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourceUrl: source.url, sourceName: source.name }),
-        });
-        const data = await resp.json();
-
-        if (data.error) {
-          setErrors((prev) => ({ ...prev, [source.id]: data.error + (data.details ? `: ${data.details}` : '') }));
-          setArticles((prev) => ({ ...prev, [source.id]: [] }));
-        } else {
-          const enriched = (data.articles || []).map((a) => ({
-            ...a, id: generateId(), sourceId: source.id,
-            sourceName: source.name, sourceUrl: source.url,
-          }));
-          if (enriched.length === 0) {
-            setErrors((prev) => ({ ...prev, [source.id]: 'Keine Artikel gefunden.' }));
-          }
-          setArticles((prev) => ({ ...prev, [source.id]: enriched }));
+        const r = await fetch('/api/headlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceUrl: src.url, sourceName: src.name }) });
+        const d = await r.json();
+        if (d.error) { setErrors((p) => ({ ...p, [src.id]: d.error })); setArticles((p) => ({ ...p, [src.id]: [] })); }
+        else {
+          const enriched = (d.articles || []).map((a) => ({ ...a, id: uid(), sourceId: src.id, sourceName: src.name, sourceUrl: src.url }));
+          setArticles((p) => ({ ...p, [src.id]: enriched }));
+          if (!enriched.length) setErrors((p) => ({ ...p, [src.id]: 'Keine Artikel.' }));
         }
-      } catch (err) {
-        setErrors((prev) => ({ ...prev, [source.id]: err.message }));
-        setArticles((prev) => ({ ...prev, [source.id]: [] }));
-      }
-
-      setLoading((prev) => ({ ...prev, [source.id]: false }));
-      if (q.indexOf(source) < q.length - 1) {
-        await new Promise((r) => setTimeout(r, 1500));
-      }
+      } catch (e) { setErrors((p) => ({ ...p, [src.id]: e.message })); setArticles((p) => ({ ...p, [src.id]: [] })); }
+      setLoading((p) => ({ ...p, [src.id]: false }));
+      if (q.indexOf(src) < q.length - 1) await new Promise((r) => setTimeout(r, 300));
     }
-    isProcessing.current = false;
+    proc.current = false;
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    const toLoad = sources.filter((s) => !articles[s.id] && !loading[s.id] && !errors[s.id]);
-    if (toLoad.length > 0) processQueue(toLoad);
-  }, [sources, ready, articles]);
+  useEffect(() => { if (!ready) return; const t = sources.filter((s) => !articles[s.id] && !loading[s.id] && !errors[s.id]); if (t.length) load(t); }, [sources, ready, articles]);
 
-  const addSource = (source) => { setSources((prev) => [...prev, source]); setShowAddModal(false); };
-  const removeSource = (id) => {
-    setSources((prev) => prev.filter((s) => s.id !== id));
-    setArticles((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
-  };
-  const refreshAll = () => { setArticles({}); setErrors({}); processQueue([...sources]); };
-  const refreshSource = (id) => {
-    const s = sources.find((x) => x.id === id);
-    if (!s) return;
-    setArticles((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    processQueue([s]);
-  };
+  const add = (s) => { setSources((p) => [...p, s]); setModal(false); };
+  const remove = (id) => { setSources((p) => p.filter((s) => s.id !== id)); setArticles((p) => { const n = { ...p }; delete n[id]; return n; }); setErrors((p) => { const n = { ...p }; delete n[id]; return n; }); if (active === id) setActive('all'); };
+  const refresh = () => { setArticles({}); setErrors({}); load([...sources]); };
+  const retry = (id) => { const s = sources.find((x) => x.id === id); if (!s) return; setArticles((p) => { const n = { ...p }; delete n[id]; return n; }); setErrors((p) => { const n = { ...p }; delete n[id]; return n; }); load([s]); };
 
-  const displayed = activeSource === 'all'
-    ? Object.values(articles).flat()
-    : articles[activeSource] || [];
-  const isAnyLoading = Object.values(loading).some(Boolean);
-  const activeErrors = Object.entries(errors).filter(([, v]) => v);
+  const shown = active === 'all' ? Object.values(articles).flat() : articles[active] || [];
+  const anyLoad = Object.values(loading).some(Boolean);
+  const errs = Object.entries(errors).filter(([, v]) => v);
 
-  if (readerArticle) {
-    return <ReaderView article={readerArticle} onBack={() => setReaderArticle(null)} />;
-  }
+  if (reader) return (
+    <div style={{ background: '#faf9f7', minHeight: '100vh', fontFamily: "'Source Sans 3', sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet" />
+      <Reader article={reader} onBack={() => setReader(null)} />
+    </div>
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      {/* Header */}
-      <header className="header">
+    <div style={{ background: '#faf9f7', minHeight: '100vh', display: 'flex', flexDirection: 'column', fontFamily: "'Source Sans 3', sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet" />
+      <style>{`@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}`}</style>
+
+      <header style={{ padding: 'clamp(14px, 3vw, 24px) clamp(16px, 4vw, 32px)', borderBottom: '1px solid #e8e5e0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h1 className="logo">Pressespiegel</h1>
-          <p className="subtitle">
-            {sources.length === 0
-              ? 'Füge Nachrichtenquellen hinzu'
-              : `${sources.length} Quelle${sources.length !== 1 ? 'n' : ''} · ${displayed.length} Artikel`}
-          </p>
+          <h1 style={{ fontSize: 'clamp(20px, 4vw, 26px)', fontFamily: "'Libre Baskerville', serif", fontWeight: 700, letterSpacing: -0.5 }}>Pressespiegel</h1>
+          <p style={{ marginTop: 2, fontSize: 13, color: '#888' }}>{sources.length === 0 ? 'Quellen hinzufügen' : `${sources.length} Quelle${sources.length !== 1 ? 'n' : ''} · ${shown.length} Artikel`}</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {sources.length > 0 && (
-            <button onClick={refreshAll} disabled={isAnyLoading} className="btn-secondary"
-              style={{ opacity: isAnyLoading ? 0.5 : 1, cursor: isAnyLoading ? 'not-allowed' : 'pointer' }}>
-              ↻ Aktualisieren
-            </button>
-          )}
-          <button onClick={() => setShowAddModal(true)} className="btn-primary">+ Quelle</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {sources.length > 0 && <button onClick={refresh} disabled={anyLoad} style={{ padding: '9px 14px', borderRadius: 10, border: '1px solid #e8e5e0', background: 'transparent', color: '#666', fontSize: 14, cursor: anyLoad ? 'not-allowed' : 'pointer', opacity: anyLoad ? 0.5 : 1, fontFamily: "'Source Sans 3', sans-serif" }}>↻</button>}
+          <button onClick={() => setModal(true)} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: '#c0392b', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'Source Sans 3', sans-serif" }}>+ Quelle</button>
         </div>
       </header>
 
-      {/* Source pills */}
       {sources.length > 0 && (
-        <div className="pills-bar">
-          <div onClick={() => setActiveSource('all')} className="pill" style={{
-            background: activeSource === 'all' ? 'var(--accent)' : 'var(--card-bg)',
-            color: activeSource === 'all' ? '#fff' : 'var(--text)',
-            fontWeight: activeSource === 'all' ? 600 : 400,
-            border: activeSource === 'all' ? 'none' : '1px solid var(--border)',
-          }}>Alle</div>
+        <div style={{ padding: '10px clamp(16px, 4vw, 32px)', display: 'flex', gap: 8, overflowX: 'auto', borderBottom: '1px solid #e8e5e0', WebkitOverflowScrolling: 'touch' }}>
+          <Pill active={active === 'all'} onClick={() => setActive('all')}>Alle</Pill>
           {sources.map((s) => (
-            <SourcePill key={s.id} source={s} active={activeSource === s.id}
-              onClick={() => setActiveSource(s.id)} onRemove={() => removeSource(s.id)} />
+            <Pill key={s.id} active={active === s.id} onClick={() => setActive(s.id)}>
+              <img src={fav(dom(s.url))} alt="" width={14} height={14} style={{ borderRadius: 3, flexShrink: 0 }} onError={(e) => { e.target.style.display = 'none'; }} />
+              <span>{s.name}</span>
+              <span onClick={(e) => { e.stopPropagation(); remove(s.id); }} style={{ opacity: 0.5, cursor: 'pointer', fontSize: 11, flexShrink: 0 }}>✕</span>
+            </Pill>
           ))}
         </div>
       )}
 
-      {/* Content */}
-      <div style={{ padding: 32, flex: 1, overflowY: 'auto' }}>
-        {activeErrors.length > 0 && (
-          <div className="error-banner">
-            {activeErrors.map(([id, msg]) => {
-              const src = sources.find((s) => s.id === id);
-              return (
-                <div key={id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                  <span><strong>{src?.name || id}:</strong> {msg}</span>
-                  <button onClick={() => refreshSource(id)} style={{
-                    background: 'none', border: 'none', color: '#991b1b',
-                    cursor: 'pointer', fontSize: 12, textDecoration: 'underline',
-                  }}>Erneut</button>
-                </div>
-              );
+      <div style={{ padding: 'clamp(16px, 4vw, 32px)', flex: 1 }}>
+        {errs.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 12, background: '#fef2f2', border: '1px solid #fecaca', fontSize: 13, color: '#991b1b' }}>
+            {errs.map(([id, msg]) => {
+              const s = sources.find((x) => x.id === id);
+              return <div key={id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}><span><strong>{s?.name}:</strong> {msg}</span><button onClick={() => retry(id)} style={{ background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', fontSize: 12, textDecoration: 'underline', flexShrink: 0 }}>Erneut</button></div>;
             })}
           </div>
         )}
 
         {Object.entries(loading).filter(([, v]) => v).length > 0 && (
-          <div style={{ marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {Object.entries(loading).filter(([, v]) => v).map(([id]) => {
-              const src = sources.find((s) => s.id === id);
-              return (
-                <div key={id} className="loading-pill">
-                  <img src={FAVICON(extractDomain(src?.url || ''))} alt=""
-                    style={{ width: 14, height: 14, borderRadius: 3 }}
-                    onError={(e) => (e.target.style.display = 'none')} />
-                  Lade {src?.name || '…'}
-                </div>
-              );
+              const s = sources.find((x) => x.id === id);
+              return <div key={id} style={{ padding: '5px 12px', borderRadius: 100, background: '#f0f9ff', border: '1px solid #bae6fd', fontSize: 12, color: '#0369a1', animation: 'pulse 1.5s ease-in-out infinite', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <img src={fav(dom(s?.url || ''))} alt="" width={12} height={12} style={{ borderRadius: 2 }} onError={(e) => { e.target.style.display = 'none'; }} />{s?.name}…
+              </div>;
             })}
           </div>
         )}
 
         {sources.length === 0 ? (
-          <div className="empty-state">
-            <div style={{ fontSize: 56, marginBottom: 20, filter: 'grayscale(1)', opacity: 0.4 }}>📰</div>
-            <h2 style={{ fontFamily: "'Libre Baskerville', serif", fontSize: 22, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)' }}>
-              Dein Pressespiegel ist leer
-            </h2>
-            <p style={{ fontSize: 15, maxWidth: 400, margin: '0 auto 24px', lineHeight: 1.6, color: 'var(--text-muted)' }}>
-              Füge Nachrichtenwebseiten hinzu, um eine personalisierte Übersicht zu erhalten.
-            </p>
-            <button onClick={() => setShowAddModal(true)} className="btn-primary" style={{ padding: '12px 28px', fontSize: 15 }}>
-              + Erste Quelle hinzufügen
-            </button>
+          <div style={{ textAlign: 'center', padding: 'clamp(40px, 10vw, 80px) 16px', color: '#888' }}>
+            <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.25 }}>📰</div>
+            <h2 style={{ fontFamily: "'Libre Baskerville', serif", fontSize: 20, fontWeight: 700, marginBottom: 8, color: '#555' }}>Dein Pressespiegel ist leer</h2>
+            <p style={{ fontSize: 14, maxWidth: 360, margin: '0 auto 20px', lineHeight: 1.6 }}>100+ Nachrichtenquellen werden automatisch über RSS erkannt.</p>
+            <button onClick={() => setModal(true)} style={{ padding: '12px 24px', borderRadius: 10, border: 'none', background: '#c0392b', color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: "'Source Sans 3', sans-serif" }}>+ Erste Quelle</button>
           </div>
-        ) : displayed.length === 0 && !isAnyLoading ? (
-          <div className="empty-state" style={{ padding: 60 }}>
-            Keine Artikel geladen. Klicke „Aktualisieren".
-          </div>
+        ) : shown.length === 0 && !anyLoad ? (
+          <div style={{ textAlign: 'center', padding: 60, color: '#888', fontSize: 14 }}>Keine Artikel. Klicke ↻</div>
         ) : (
-          <div className="article-grid">
-            {displayed.map((article) => (
-              <ArticleCard key={article.id} article={article}
-                onClick={() => setReaderArticle(article)} />
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: 14 }}>
+            {shown.map((a) => <Card key={a.id} article={a} onClick={() => setReader(a)} />)}
           </div>
         )}
       </div>
 
-      {showAddModal && <AddSourceModal onAdd={addSource} onClose={() => setShowAddModal(false)} />}
-
-      <style jsx>{`
-        .header {
-          padding: 28px 32px 24px;
-          border-bottom: 1px solid var(--border);
-          display: flex; align-items: center;
-          justify-content: space-between;
-          flex-wrap: wrap; gap: 16px;
-        }
-        .logo {
-          font-size: 28px; font-family: 'Libre Baskerville', serif;
-          font-weight: 700; letter-spacing: -0.5px;
-        }
-        .subtitle { margin-top: 4px; font-size: 14px; color: var(--text-muted); }
-        .pills-bar {
-          padding: 16px 32px; display: flex; gap: 10px;
-          overflow-x: auto; border-bottom: 1px solid var(--border);
-        }
-        .pill {
-          display: flex; align-items: center; gap: 8px;
-          padding: 8px 16px; border-radius: 100px;
-          cursor: pointer; font-size: 14px;
-          transition: all 0.2s ease; white-space: nowrap; flex-shrink: 0;
-        }
-        .article-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-          gap: 20px;
-        }
-        .article-card {
-          background: var(--card-bg); border-radius: 14px; padding: 24px;
-          cursor: pointer; border: 1px solid var(--border);
-          transition: all 0.25s ease;
-          display: flex; flex-direction: column; gap: 10px;
-        }
-        .article-card:hover {
-          border-color: var(--accent);
-          transform: translateY(-2px);
-          box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-        }
-        .article-meta {
-          display: flex; align-items: center; gap: 8px;
-          font-size: 12px; color: var(--text-muted);
-        }
-        .article-title {
-          font-size: 17px; font-weight: 700; line-height: 1.35;
-          font-family: 'Libre Baskerville', serif;
-        }
-        .article-summary {
-          font-size: 14px; line-height: 1.6; color: var(--text-secondary);
-          display: -webkit-box; -webkit-line-clamp: 3;
-          -webkit-box-orient: vertical; overflow: hidden;
-        }
-        .paywall-badge {
-          background: #fff3e0; color: #e65100;
-          padding: 2px 8px; border-radius: 100px;
-          font-size: 11px; font-weight: 600;
-        }
-        .reader { max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: 'Libre Baskerville', serif; }
-        .back-btn {
-          background: none; border: none; color: var(--accent);
-          cursor: pointer; font-size: 15px; font-family: 'Source Sans 3', sans-serif;
-          padding: 0; margin-bottom: 32px;
-        }
-        .reader-meta {
-          font-size: 12px; color: var(--text-muted); margin-bottom: 12px;
-          font-family: 'Source Sans 3', sans-serif;
-          display: flex; align-items: center; gap: 8px;
-        }
-        .reader-title { font-size: 28px; font-weight: 700; line-height: 1.3; margin-bottom: 16px; }
-        .original-link {
-          display: inline-flex; align-items: center; gap: 6px;
-          font-size: 13px; color: var(--accent);
-          font-family: 'Source Sans 3', sans-serif;
-          margin-bottom: 32px; text-decoration: none;
-        }
-        .reader-content { border-top: 1px solid var(--border); padding-top: 32px; }
-        .reader-text { font-size: 17px; line-height: 1.85; color: var(--text-secondary); white-space: pre-wrap; }
-        .loading-text {
-          text-align: center; padding: 60px; color: var(--text-muted);
-          font-size: 14px; font-family: 'Source Sans 3', sans-serif;
-          animation: pulse 1.5s ease-in-out infinite;
-        }
-        .error-box {
-          text-align: center; padding: 40px; color: #e65100;
-          background: #fff3e0; border-radius: 12px;
-          font-family: 'Source Sans 3', sans-serif; font-size: 15px;
-        }
-        .error-banner {
-          margin-bottom: 24px; padding: 16px 20px; border-radius: 12px;
-          background: #fef2f2; border: 1px solid #fecaca;
-          font-size: 13px; color: #991b1b;
-        }
-        .loading-pill {
-          padding: 8px 16px; border-radius: 100px;
-          background: #f0f9ff; border: 1px solid #bae6fd;
-          font-size: 13px; color: #0369a1;
-          animation: pulse 1.5s ease-in-out infinite;
-          display: flex; align-items: center; gap: 8px;
-        }
-        .empty-state { text-align: center; padding: 80px 24px; color: var(--text-muted); }
-        .modal-overlay {
-          position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-          display: flex; align-items: center; justify-content: center;
-          z-index: 1000; backdrop-filter: blur(4px);
-        }
-        .modal {
-          background: var(--bg); border-radius: 16px; padding: 32px;
-          width: 90%; max-width: 460px; border: 1px solid var(--border);
-          box-shadow: 0 24px 48px rgba(0,0,0,0.15);
-        }
-        .input-label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
-        .input-field {
-          width: 100%; padding: 12px 16px; border-radius: 10px;
-          border: 1px solid var(--border); background: var(--card-bg);
-          color: var(--text); font-size: 15px; outline: none;
-        }
-        .btn-primary {
-          padding: 10px 20px; border-radius: 10px; border: none;
-          background: var(--accent); color: #fff; font-size: 14px;
-          font-weight: 600; cursor: pointer; flex: 1;
-        }
-        .btn-secondary {
-          padding: 10px 20px; border-radius: 10px;
-          border: 1px solid var(--border); background: transparent;
-          color: var(--text-secondary); font-size: 14px; cursor: pointer; flex: 1;
-        }
-      `}</style>
+      {modal && <Modal onAdd={add} onClose={() => setModal(false)} />}
     </div>
   );
 }
