@@ -127,8 +127,9 @@ const FEEDS = {
   'urlaubspiraten.de':  'https://www.urlaubspiraten.de/feed/',
 };
 
-const PAYWALL_PATTERNS = /\b(S\+|Z\+|F\+|SZ\s*Plus|SPIEGEL\s*Plus|ZEIT\+|Premium|Exklusiv|Abo\s*nötig|Subscriber|Bezahlinhalt)\b/i;
-const PAYWALL_DOMAINS = ['spiegel.de','zeit.de','faz.net','sueddeutsche.de','welt.de','handelsblatt.com','nzz.ch','abendblatt.de','morgenpost.de','wiwo.de','manager-magazin.de','tagesspiegel.de','stuttgarter-zeitung.de','ksta.de','tagesanzeiger.ch'];
+const PAYWALL_PATTERNS = /\b(S\+|A\+|Z\+|F\+|SZ[\s-]*Plus|SPIEGEL[\s-]*Plus|SPIEGEL\+|ZEIT\+|BILDplus|Premium|Exklusiv|Abo[\s-]*nötig|Subscriber|Bezahlinhalt|WELTplus|FAZplus|Handelsblatt[\s-]*Premium)\b/i;
+const PAYWALL_URL_PATTERNS = /\/(plus|premium)\b/i;
+const PAYWALL_DOMAINS = ['spiegel.de','zeit.de','faz.net','sueddeutsche.de','welt.de','handelsblatt.com','nzz.ch','abendblatt.de','morgenpost.de','wiwo.de','manager-magazin.de','tagesspiegel.de','stuttgarter-zeitung.de','ksta.de','tagesanzeiger.ch','stern.de'];
 
 function getDomain(url) {
   try { return new URL(url).hostname.replace('www.', ''); } catch { return ''; }
@@ -144,11 +145,44 @@ function findFeed(url) {
 }
 
 function isPaywall(item, domain) {
-  const text = `${item.title || ''} ${item.contentSnippet || ''} ${item.content || ''}`;
+  const title = item.title || '';
+  const text = `${title} ${item.contentSnippet || ''} ${item.content || ''}`;
+  const link = item.link || item.guid || '';
+  const categories = (item.categories || []).join(' ');
+
+  // Explicit paywall markers in text
   if (PAYWALL_PATTERNS.test(text)) return true;
-  if (PAYWALL_DOMAINS.some((d) => domain.includes(d))) {
-    return /plus|premium|exklusiv/i.test(text);
+  if (PAYWALL_PATTERNS.test(categories)) return true;
+
+  // URL-based detection (e.g. /plus/ in URL)
+  if (PAYWALL_URL_PATTERNS.test(link)) return true;
+
+  // Spiegel: S+ articles have "SPIEGEL+" or category "SPIEGEL+"
+  if (domain.includes('spiegel.de')) {
+    if (/spiegel\s*\+|S\+/i.test(text + ' ' + categories)) return true;
+    if (link.includes('-plus-') || /\/plus\//i.test(link)) return true;
   }
+
+  // Abendblatt: A+ articles
+  if (domain.includes('abendblatt.de')) {
+    if (/A\+|Abendblatt\s*Plus/i.test(text + ' ' + categories)) return true;
+  }
+
+  // Zeit: Z+ articles
+  if (domain.includes('zeit.de')) {
+    if (/Z\+|ZEIT\+|zeit\s*plus/i.test(text + ' ' + categories)) return true;
+  }
+
+  // FAZ: F+ articles
+  if (domain.includes('faz.net')) {
+    if (/F\+|FAZ\+|faz\s*plus/i.test(text + ' ' + categories)) return true;
+  }
+
+  // Generic check for known paywall domains - "plus" or "premium" in text/categories
+  if (PAYWALL_DOMAINS.some((d) => domain.includes(d))) {
+    if (/\bplus\b|\bpremium\b|\bexklusiv\b/i.test(text + ' ' + categories)) return true;
+  }
+
   return false;
 }
 
