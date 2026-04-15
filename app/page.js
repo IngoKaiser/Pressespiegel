@@ -185,18 +185,19 @@ export default function Home() {
   const [reader, setReader] = useState(null);
   const [ready, setReady] = useState(false);
   const [scrollY, setScrollY] = useState(0);
-  const [pullState, setPullState] = useState('idle'); // idle | pulling | refreshing
-  const feedRef = useRef(null);
+  const [pullState, setPullState] = useState('idle');
   const proc = useRef(false);
   const touchStart = useRef(0);
 
   useEffect(() => {
     try { const s = localStorage.getItem(SK); if (s) setSources(JSON.parse(s)); } catch {}
     try { const c = localStorage.getItem(CK); if (c) { const { d, t } = JSON.parse(c); if (Date.now() - t < TTL) setArticles(d); } } catch {}
+    try { const b = localStorage.getItem('ps-broken'); if (b) setBrokenIds(new Set(JSON.parse(b))); } catch {}
     setReady(true);
   }, []);
   useEffect(() => { if (ready) try { localStorage.setItem(SK, JSON.stringify(sources)); } catch {} }, [sources, ready]);
   useEffect(() => { if (ready && Object.keys(articles).length) try { localStorage.setItem(CK, JSON.stringify({ d: articles, t: Date.now() })); } catch {} }, [articles, ready]);
+  useEffect(() => { if (brokenIds.size > 0) try { localStorage.setItem('ps-broken', JSON.stringify([...brokenIds])); } catch {} }, [brokenIds]);
 
   // Auto-dismiss errors after 5s
   useEffect(() => {
@@ -238,8 +239,9 @@ export default function Home() {
 
   useEffect(() => { if (!ready) return; const t = sources.filter((s) => !articles[s.id] && !loading[s.id]); if (t.length) load(t); }, [sources, ready, articles]);
 
-  // Pull-to-refresh handlers
-  const onTouchStart = (e) => { if (feedRef.current?.scrollTop === 0) touchStart.current = e.touches[0].clientY; else touchStart.current = 0; };
+  // Pull-to-refresh handlers - attached to contentRef, not the whole page
+  const contentRef = useRef(null);
+  const onTouchStart = (e) => { if (contentRef.current?.scrollTop === 0) touchStart.current = e.touches[0].clientY; else touchStart.current = 0; };
   const onTouchMove = (e) => { if (touchStart.current && e.touches[0].clientY - touchStart.current > 60 && pullState === 'idle') setPullState('pulling'); };
   const onTouchEnd = () => {
     if (pullState === 'pulling') {
@@ -252,14 +254,23 @@ export default function Home() {
 
   const add = (s) => { setSources((p) => [...p, s]); setModal(false); };
   const remove = (id) => { setSources((p) => p.filter((s) => s.id !== id)); setArticles((p) => { const n = { ...p }; delete n[id]; return n; }); if (activeFilter === id) setActiveFilter('all'); };
-  const markBroken = (id) => setBrokenIds(prev => new Set(prev).add(id));
+  const markBroken = (id) => {
+    // Also mark by URL so it persists across reloads (id changes on reload)
+    const article = Object.values(articles).flat().find(a => a.id === id);
+    setBrokenIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      if (article?.url) next.add(article.url);
+      return next;
+    });
+  };
 
-  const openArticle = (article) => { if (feedRef.current) setScrollY(feedRef.current.scrollTop); setReader(article); };
-  const closeReader = () => { setReader(null); requestAnimationFrame(() => { if (feedRef.current) feedRef.current.scrollTop = scrollY; }); };
+  const openArticle = (article) => { if (contentRef.current) setScrollY(contentRef.current.scrollTop); setReader(article); };
+  const closeReader = () => { setReader(null); requestAnimationFrame(() => { if (contentRef.current) contentRef.current.scrollTop = scrollY; }); };
 
-  // Filter: no paywall, no broken, apply source filter, sort by time
+  // Filter: no paywall, no broken (by id or url), apply source filter, sort by time
   const allArticles = Object.values(articles).flat()
-    .filter((a) => !a.paywall && !brokenIds.has(a.id))
+    .filter((a) => !a.paywall && !brokenIds.has(a.id) && !brokenIds.has(a.url))
     .filter((a) => activeFilter === 'all' || a.sourceId === activeFilter)
     .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
 
@@ -279,21 +290,13 @@ export default function Home() {
       <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet" />
       <style>{`@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}} *{box-sizing:border-box;margin:0;padding:0}`}</style>
 
-      <div ref={feedRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-        style={{ height: '100dvh', overflowY: 'auto', background: '#f5f4f0', fontFamily: "'Source Sans 3', sans-serif" }}>
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#f5f4f0', fontFamily: "'Source Sans 3', sans-serif" }}>
 
-        {/* Pull indicator */}
-        {pullState !== 'idle' && (
-          <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: '#999', animation: pullState === 'refreshing' ? 'pulse 1s ease-in-out infinite' : 'none' }}>
-            {pullState === 'pulling' ? 'Loslassen zum Aktualisieren' : 'Aktualisiere ...'}
-          </div>
-        )}
-
-        {/* Header */}
+        {/* Fixed Header */}
         <div style={{
-          position: 'sticky', top: 0, zIndex: 100,
+          flexShrink: 0, zIndex: 100,
           padding: '10px clamp(16px, 4vw, 32px)',
-          background: 'rgba(245,244,240,0.9)', backdropFilter: 'blur(16px)',
+          background: '#f5f4f0',
           borderBottom: '1px solid rgba(0,0,0,0.06)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: sources.length > 0 ? 10 : 0 }}>
@@ -334,6 +337,17 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Scrollable content area with pull-to-refresh */}
+        <div ref={contentRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+          style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+
+          {/* Pull indicator */}
+          {pullState !== 'idle' && (
+            <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: '#999', animation: pullState === 'refreshing' ? 'pulse 1s ease-in-out infinite' : 'none' }}>
+              {pullState === 'pulling' ? 'Loslassen zum Aktualisieren' : 'Aktualisiere ...'}
+            </div>
+          )}
 
         {/* Content */}
         <div style={{ padding: 'clamp(12px, 3vw, 24px)', maxWidth: 900, margin: '0 auto' }}>
@@ -377,6 +391,9 @@ export default function Home() {
 
           {allArticles.length > 0 && <div style={{ textAlign: 'center', padding: '24px 0 48px', color: '#ccc', fontSize: 12 }}>{allArticles.length} Artikel</div>}
         </div>
+        {/* end content inner */}
+        </div>
+        {/* end scrollable content area */}
       </div>
 
       {modal && <Modal onAdd={add} onClose={() => setModal(false)} />}
