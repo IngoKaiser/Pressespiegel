@@ -3,10 +3,16 @@ import Parser from 'rss-parser';
 const parser = new Parser({
   timeout: 12000,
   headers: { 'User-Agent': 'Pressespiegel/2.0' },
-  customFields: { item: [['media:content', 'media'], ['media:thumbnail', 'mediaThumbnail'], ['enclosure', 'enclosure']] },
+  customFields: {
+    item: [
+      ['media:content', 'media'],
+      ['media:thumbnail', 'mediaThumbnail'],
+      ['enclosure', 'enclosure'],
+      ['content:encoded', 'contentEncoded'],
+    ],
+  },
 });
 
-// ─── 100+ RSS Feeds (same as before, abbreviated for clarity) ───
 const FEEDS = {
   'spiegel.de':'https://www.spiegel.de/schlagzeilen/index.rss',
   'faz.net':'https://www.faz.net/rss/aktuell/',
@@ -62,12 +68,18 @@ const FEEDS = {
   'techcrunch.com':'https://techcrunch.com/feed/',
   'theverge.com':'https://www.theverge.com/rss/index.xml',
   'arstechnica.com':'https://feeds.arstechnica.com/arstechnica/index',
+  'washingtonpost.com':'https://feeds.washingtonpost.com/rss/homepage',
+  'blick.ch':'https://www.blick.ch/rss.xml',
+  'kurier.at':'https://kurier.at/xml/rssd',
+  'auto-motor-und-sport.de':'https://www.auto-motor-und-sport.de/feed/',
+  'gala.de':'https://www.gala.de/feed/rss',
+  'geo.de':'https://www.geo.de/feed/rss',
 };
 
 const PAYWALL_PATTERNS = /\b(S\+|A\+|Z\+|F\+|SZ[\s-]*Plus|SPIEGEL[\s-]*\+|SPIEGEL\s*Plus|ZEIT\+|BILDplus|WELTplus|FAZ\+|Handelsblatt[\s-]*Premium)\b/i;
-const PAYWALL_DOMAINS = ['spiegel.de','zeit.de','faz.net','sueddeutsche.de','welt.de','handelsblatt.com','nzz.ch','abendblatt.de','morgenpost.de','wiwo.de','manager-magazin.de','tagesspiegel.de'];
 
 function getDomain(url) { try { return new URL(url).hostname.replace('www.', ''); } catch { return ''; } }
+
 function findFeed(url) {
   const d = getDomain(url);
   if (FEEDS[d]) return FEEDS[d];
@@ -76,12 +88,8 @@ function findFeed(url) {
 }
 
 function isPaywall(item, domain) {
-  const title = item.title || '';
-  const snippet = item.contentSnippet || item.content || '';
-  const cats = (item.categories || []).join(' ');
+  const all = `${item.title || ''} ${item.contentSnippet || ''} ${(item.categories || []).join(' ')}`;
   const link = item.link || '';
-  const all = `${title} ${snippet} ${cats}`;
-
   if (PAYWALL_PATTERNS.test(all)) return true;
   if (/\/(plus|premium)\//i.test(link)) return true;
   if (domain.includes('spiegel.de') && (/spiegel\s*\+|S\+/i.test(all) || link.includes('-plus-'))) return true;
@@ -99,15 +107,23 @@ function isToday(dateStr) {
 }
 
 function extractImage(item) {
-  // media:content
+  // media:content / media:thumbnail
   if (item.media?.$?.url) return item.media.$.url;
   if (item.mediaThumbnail?.$?.url) return item.mediaThumbnail.$.url;
-  // enclosure
-  if (item.enclosure?.url && item.enclosure?.type?.startsWith('image')) return item.enclosure.url;
-  // Look for img in content
-  const content = item.content || item['content:encoded'] || '';
-  const imgMatch = content.match(/<img[^>]+src=["']([^"']+)["']/i);
-  if (imgMatch) return imgMatch[1];
+  // enclosure (image type)
+  if (item.enclosure?.url && (item.enclosure?.type || '').startsWith('image')) return item.enclosure.url;
+  // Postillon & others: look in content:encoded first (has full HTML with <img>)
+  const encoded = item.contentEncoded || item['content:encoded'] || '';
+  if (encoded) {
+    const m = encoded.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m && !/1x1|pixel|tracking|logo/i.test(m[1])) return m[1];
+  }
+  // Fallback: content field
+  const content = item.content || '';
+  if (content) {
+    const m = content.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m && !/1x1|pixel|tracking|logo/i.test(m[1])) return m[1];
+  }
   return null;
 }
 
@@ -153,17 +169,21 @@ export async function POST(request) {
   try {
     let feedUrl = findFeed(sourceUrl);
     if (feedUrl) {
-      try { const a = await fetchRSS(feedUrl, sourceUrl); if (a.length > 0) return Response.json({ articles: a, source: 'rss', feedUrl }); } catch {}
+      try {
+        const a = await fetchRSS(feedUrl, sourceUrl);
+        // Return even if 0 articles today - not an error
+        return Response.json({ articles: a, source: 'rss', feedUrl });
+      } catch {}
     }
     const discovered = await discoverFeed(sourceUrl);
     if (discovered) {
-      try { const a = await fetchRSS(discovered, sourceUrl); if (a.length > 0) return Response.json({ articles: a, source: 'rss-discovered', feedUrl: discovered }); } catch {}
+      try { const a = await fetchRSS(discovered, sourceUrl); return Response.json({ articles: a, source: 'rss-discovered', feedUrl: discovered }); } catch {}
     }
     const d = getDomain(sourceUrl);
     for (const p of ['/rss', '/feed', '/rss.xml', '/feed.xml']) {
       try { const a = await fetchRSS(`https://www.${d}${p}`, sourceUrl); if (a.length > 0) return Response.json({ articles: a, source: 'rss-guessed' }); } catch {}
     }
-    return Response.json({ error: 'Kein RSS-Feed gefunden oder keine Artikel von heute.' }, { status: 500 });
+    return Response.json({ error: 'Kein RSS-Feed gefunden.' }, { status: 404 });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
   }

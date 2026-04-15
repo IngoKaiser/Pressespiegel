@@ -1,7 +1,7 @@
 const cookieStore = {};
-function getDomain(url) { try { return new URL(url).hostname; } catch { return ''; } }
-function getCookies(d) { return cookieStore[d] || ''; }
-function storeCookies(d, h) {
+function gd(url) { try { return new URL(url).hostname; } catch { return ''; } }
+function gc(d) { return cookieStore[d] || ''; }
+function sc(d, h) {
   if (!h) return;
   const arr = Array.isArray(h) ? h : [h];
   const map = {};
@@ -10,64 +10,77 @@ function storeCookies(d, h) {
   cookieStore[d] = Object.values(map).join('; ');
 }
 
-const CONSENT = 'euconsent-v2=accepted; consentUUID=accepted; CookieConsent=true; consent_given=1; gdpr_consent=1; sp_consent=accepted; ';
+const CONSENT = 'euconsent-v2=accepted; CookieConsent=true; consent_given=1; gdpr_consent=1; sp_consent=accepted; ';
 
-// Phrases that indicate paywall/login wall in extracted text
+// Paywall phrases found in article body text
 const PAYWALL_PHRASES = [
-  'Sie können den Artikel leider nicht mehr aufrufen',
   'Sie können den Artikel leider nicht',
   'Der Link, der Ihnen geschickt wurde',
   'Artikel wurde bereits 10 Mal geöffnet',
-  'Digital-Abo',
-  'Zum Login',
-  'Print-Abo',
-  'Digital-Zugang bestellen',
-  'Jetzt testen',
-  'Jetzt sparen',
-  'Jetzt weiterlesen',
-  'Registrieren Sie sich',
-  'Melden Sie sich an',
-  'Anmelden und weiterlesen',
+  'Digital-Abo', 'Zum Login',
+  'Jetzt weiterlesen', 'Registrieren Sie sich',
+  'Melden Sie sich an', 'Anmelden und weiterlesen',
   'Dieser Artikel ist für Abonnenten',
   'Um diesen Artikel zu lesen',
   'Diesen Artikel lesen Sie mit',
+  'Bereits Abonnent?', 'Print-Abo',
+  'Digital-Zugang bestellen',
+  'Ihr Heimathafen für lokale Nachrichten',
 ];
 
-// Patterns to remove from article text
-const NOISE_PATTERNS = [
-  /Bild vergrößern[^\n]*/gi,
-  /Foto:\s*[^\n]*/gi,
-  /^Quelle:\s*[^\n]*/gim,
-  /^\s*Anzeige\s*$/gim,
-  /^\s*Werbung\s*$/gim,
-  /Lesen Sie auch:?\s*/gi,
-  /Mehr zum Thema:?\s*/gi,
-  /icon_cookie[^\n]*/gi,
-  /Zur Merkliste hinzufügen[^\n]*/gi,
-  /Artikel teilen[^\n]*/gi,
-  /Kommentare\s*\(\d+\)/gi,
+// Paragraphs containing these get removed entirely
+const REMOVE_IF_CONTAINS = [
+  /aufklappen/i,
+  /Automatisch erstellt mit KI/i,
+  /War die Zusammenfassung hilfreich/i,
+  /positiv bewerten.*negativ bewerten/i,
+  /negativ bewerten.*positiv bewerten/i,
+  /Mehr Informationen dazu hier/i,
+  /Danke für Ihr Feedback/i,
+  /Bild vergrößern/i,
+  /Foto:\s*\w/i,
+  /Quelle:\s*\w/i,
+  /^\s*Anzeige\s*$/i,
+  /^\s*Werbung\s*$/i,
+  /Lesen Sie auch/i,
+  /Mehr zum Thema/i,
+  /Zur Merkliste/i,
+  /Artikel teilen/i,
+  /Kommentare\s*\(\d+\)/i,
+  /icon_cookie/i,
+  /Newsletter.*abonnieren/i,
+  /Jetzt testen/i,
+  /Jetzt sparen/i,
+  /SPIEGEL.*Account/i,
+  /Laden Sie sich jetzt/i,
+  /Empfohlener externer Inhalt/i,
+  /An dieser Stelle finden Sie/i,
+  /Ich bin damit einverstanden/i,
+  /Externe Inhalte laden/i,
+  /Hier können Sie die Rechte/i,
+  /Alle Rechte vorbehalten/i,
+  /Mehr lesen über/i,
+  /Feedback.*an.*Redaktion/i,
 ];
 
-function cleanArticleText(paragraphs) {
-  return paragraphs
-    .map(p => {
-      let t = p;
-      NOISE_PATTERNS.forEach(pat => { t = t.replace(pat, ''); });
-      return t.trim();
-    })
-    .filter(p => {
-      if (p.length < 30) return false;
-      // Filter image alt texts (usually short descriptive phrases with specific patterns)
-      if (/^(Bild|Foto|Grafik|Illustration|Symbolbild)\s/i.test(p)) return false;
-      // Filter cookie/tracking consent text
-      if (/cookie|datenschutz|tracking/i.test(p) && p.length < 120) return false;
-      return true;
-    });
+function cleanParagraphs(paragraphs) {
+  return paragraphs.filter(p => {
+    if (p.length < 25) return false;
+    // Filter lines starting with image-like descriptions
+    if (/^(Bild|Foto|Grafik|Illustration|Symbolbild|Quelle|Video|Audio)\s/i.test(p)) return false;
+    // Filter cookie/consent
+    if (/cookie|datenschutz/i.test(p) && p.length < 150) return false;
+    // Filter any paragraph matching remove patterns
+    if (REMOVE_IF_CONTAINS.some(pat => pat.test(p))) return false;
+    // Filter very short lines that are likely UI elements
+    if (p.length < 50 && /^(teilen|drucken|senden|merken|bewerten|kommentieren|antworten)/i.test(p)) return false;
+    return true;
+  });
 }
 
-function detectPaywallInText(paragraphs) {
-  const fullText = paragraphs.join(' ');
-  return PAYWALL_PHRASES.some(phrase => fullText.includes(phrase));
+function detectPaywall(paragraphs) {
+  const text = paragraphs.join(' ');
+  return PAYWALL_PHRASES.some(phrase => text.includes(phrase));
 }
 
 function extractImages(html) {
@@ -78,31 +91,28 @@ function extractImages(html) {
   let m;
   while ((m = imgRegex.exec(block)) !== null && images.length < 5) {
     const src = m[1];
-    // Skip tiny images, tracking pixels, icons
-    if (/1x1|pixel|tracking|logo|icon|avatar|button|arrow|spinner/i.test(src)) continue;
-    if (/\.gif$/i.test(src) && !/giphy|tenor/i.test(src)) continue;
-    // Check for width/height attrs suggesting it's small
-    const widthMatch = m[0].match(/width=["']?(\d+)/i);
-    if (widthMatch && parseInt(widthMatch[1]) < 100) continue;
+    if (/1x1|pixel|tracking|logo|icon|avatar|button|arrow|spinner|\.gif$/i.test(src)) continue;
+    const w = m[0].match(/width=["']?(\d+)/i);
+    if (w && parseInt(w[1]) < 100) continue;
     images.push(src);
   }
   return images;
 }
 
 async function fetchArticle(url) {
-  const domain = getDomain(url);
+  const domain = gd(url);
   const resp = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-      'Cookie': CONSENT + getCookies(domain),
+      'Accept-Language': 'de-DE,de;q=0.9',
+      'Cookie': CONSENT + gc(domain),
     },
     signal: AbortSignal.timeout(12000),
     redirect: 'follow',
   });
-  const setCookie = resp.headers.getSetCookie?.() || resp.headers.get('set-cookie');
-  if (setCookie) storeCookies(domain, setCookie);
+  const ck = resp.headers.getSetCookie?.() || resp.headers.get('set-cookie');
+  if (ck) sc(domain, ck);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return await resp.text();
 }
@@ -111,11 +121,8 @@ export async function POST(request) {
   const { url, title } = await request.json();
   try {
     const html = await fetchArticle(url);
-
-    // Extract images
     const images = extractImages(html);
 
-    // Clean HTML
     let clean = html
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -123,8 +130,12 @@ export async function POST(request) {
       .replace(/<footer[\s\S]*?<\/footer>/gi, '')
       .replace(/<aside[\s\S]*?<\/aside>/gi, '')
       .replace(/<header[\s\S]*?<\/header>/gi, '')
-      .replace(/<figure[\s\S]*?<\/figure>/gi, '') // Remove figure/caption blocks entirely
+      .replace(/<figure[\s\S]*?<\/figure>/gi, '')
       .replace(/<figcaption[\s\S]*?<\/figcaption>/gi, '')
+      .replace(/<button[\s\S]*?<\/button>/gi, '')
+      .replace(/<form[\s\S]*?<\/form>/gi, '')
+      .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
       .replace(/<!--[\s\S]*?-->/g, '');
 
     const articleMatch = clean.match(/<article[\s\S]*?<\/article>/i);
@@ -139,23 +150,24 @@ export async function POST(request) {
         .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, ' ')
         .replace(/\s+/g, ' ').trim();
-      if (text.length > 30) rawParagraphs.push(text);
+      if (text.length > 25) rawParagraphs.push(text);
     }
 
-    const paragraphs = cleanArticleText(rawParagraphs);
-
-    // Check for paywall in extracted text
-    if (detectPaywallInText(rawParagraphs)) {
+    // Check paywall BEFORE cleaning
+    if (detectPaywall(rawParagraphs)) {
       return Response.json({ content: 'PAYWALL', method: 'direct', images });
     }
+
+    const paragraphs = cleanParagraphs(rawParagraphs);
 
     if (paragraphs.length >= 2) {
       return Response.json({ content: paragraphs.join('\n\n'), method: 'direct', images });
     }
 
+    // Too few paragraphs = likely paywall, video, audio, or interactive content
     return Response.json({
-      content: paragraphs.length > 0 ? paragraphs.join('\n\n') : 'Artikeltext konnte nicht extrahiert werden.',
-      method: 'direct-partial',
+      content: paragraphs.length > 0 ? paragraphs.join('\n\n') : 'NOT_EXTRACTABLE',
+      method: paragraphs.length > 0 ? 'direct-partial' : 'failed',
       images,
     });
   } catch (err) {
