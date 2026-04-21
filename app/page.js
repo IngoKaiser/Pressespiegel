@@ -268,11 +268,26 @@ export default function Home() {
   const openArticle = (article) => { if (contentRef.current) setScrollY(contentRef.current.scrollTop); setReader(article); };
   const closeReader = () => { setReader(null); requestAnimationFrame(() => { if (contentRef.current) contentRef.current.scrollTop = scrollY; }); };
 
-  // Filter: no paywall, no broken (by id or url), apply source filter, sort by time
-  const allArticles = Object.values(articles).flat()
-    .filter((a) => !a.paywall && !brokenIds.has(a.id) && !brokenIds.has(a.url))
-    .filter((a) => activeFilter === 'all' || a.sourceId === activeFilter)
-    .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
+  // Filter: no paywall, no broken (by id or url), apply source filter, sort by time, deduplicate
+  const normalizeTitle = (t) => t.toLowerCase().replace(/[^a-zäöüß0-9]/g, '').slice(0, 60);
+  const allArticles = (() => {
+    const sorted = Object.values(articles).flat()
+      .filter((a) => !a.paywall && !brokenIds.has(a.id) && !brokenIds.has(a.url))
+      .filter((a) => activeFilter === 'all' || a.sourceId === activeFilter)
+      .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
+    // Deduplicate: same title or very similar title across all sources
+    const seen = new Set();
+    return sorted.filter((a) => {
+      const key = normalizeTitle(a.title);
+      if (seen.has(key)) return false;
+      // Also check for partial matches (one title is substring of another)
+      for (const k of seen) {
+        if (key.length > 20 && k.length > 20 && (key.includes(k.slice(0, 30)) || k.includes(key.slice(0, 30)))) return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  })();
 
   const anyLoad = Object.values(loading).some(Boolean);
   const visibleErrors = Object.entries(errors).filter(([, v]) => v);
