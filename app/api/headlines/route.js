@@ -5,10 +5,11 @@ const parser = new Parser({
   headers: { 'User-Agent': 'Pressespiegel/2.0' },
   customFields: {
     item: [
-      ['media:content', 'media'],
+      ['media:content', 'media', { keepArray: true }],
       ['media:thumbnail', 'mediaThumbnail'],
       ['enclosure', 'enclosure'],
       ['content:encoded', 'contentEncoded'],
+      ['description', 'description'],
     ],
   },
 });
@@ -107,22 +108,61 @@ function isToday(dateStr) {
 }
 
 function extractImage(item) {
-  // media:content / media:thumbnail
-  if (item.media?.$?.url) return item.media.$.url;
-  if (item.mediaThumbnail?.$?.url) return item.mediaThumbnail.$.url;
-  // enclosure (image type)
-  if (item.enclosure?.url && (item.enclosure?.type || '').startsWith('image')) return item.enclosure.url;
-  // Postillon & others: look in content:encoded first (has full HTML with <img>)
-  const encoded = item.contentEncoded || item['content:encoded'] || '';
-  if (encoded) {
-    const m = encoded.match(/<img[^>]+src=["']([^"']+)["']/i);
-    if (m && !/1x1|pixel|tracking|logo/i.test(m[1])) return m[1];
+  // 1. media:content (can be object or array)
+  if (item.media) {
+    if (Array.isArray(item.media)) {
+      for (const m of item.media) {
+        const url = m?.$?.url || m?.url;
+        if (url && isImageUrl(url)) return url;
+      }
+    } else {
+      const url = item.media?.$?.url || item.media?.url;
+      if (url && isImageUrl(url)) return url;
+    }
   }
-  // Fallback: content field
-  const content = item.content || '';
-  if (content) {
-    const m = content.match(/<img[^>]+src=["']([^"']+)["']/i);
-    if (m && !/1x1|pixel|tracking|logo/i.test(m[1])) return m[1];
+  // 2. media:thumbnail
+  if (item.mediaThumbnail) {
+    const url = item.mediaThumbnail?.$?.url || item.mediaThumbnail?.url;
+    if (url && isImageUrl(url)) return url;
+  }
+  // 3. enclosure
+  if (item.enclosure?.url) {
+    const type = item.enclosure?.type || '';
+    if (type.startsWith('image') || /\.(jpe?g|png|webp|avif)/i.test(item.enclosure.url)) return item.enclosure.url;
+  }
+  // 4. content:encoded (full HTML, e.g. Postillon, Mopo)
+  const encoded = item.contentEncoded || item['content:encoded'] || '';
+  const imgFromEncoded = findImgInHtml(encoded);
+  if (imgFromEncoded) return imgFromEncoded;
+  // 5. content field
+  const imgFromContent = findImgInHtml(item.content || '');
+  if (imgFromContent) return imgFromContent;
+  // 6. description field (some feeds put HTML with images here)
+  const imgFromDesc = findImgInHtml(item.description || '');
+  if (imgFromDesc) return imgFromDesc;
+  // 7. itunes:image or image field
+  if (item.itunes?.image) return item.itunes.image;
+  if (typeof item.image === 'string' && item.image.startsWith('http')) return item.image;
+  return null;
+}
+
+function isImageUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return !/1x1|pixel|tracking|spacer|blank\.|logo.*\d{1,2}x/i.test(url);
+}
+
+function findImgInHtml(html) {
+  if (!html || typeof html !== 'string') return null;
+  // Match all img tags, prefer larger ones
+  const matches = [...html.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*/gi)];
+  for (const m of matches) {
+    const src = m[1];
+    if (!isImageUrl(src)) continue;
+    if (/\.gif$/i.test(src) && !/giphy|tenor/i.test(src)) continue;
+    // Check for width hint - skip small icons
+    const widthMatch = m[0].match(/width=["']?(\d+)/i);
+    if (widthMatch && parseInt(widthMatch[1]) < 80) continue;
+    return src;
   }
   return null;
 }
