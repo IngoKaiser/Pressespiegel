@@ -1,3 +1,20 @@
+function decodeEntities(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&shy;/g, '')
+    .replace(/&ldquo;/g, '“').replace(/&rdquo;/g, '”').replace(/&bdquo;/g, '„')
+    .replace(/&lsquo;/g, '‘').replace(/&rsquo;/g, '’').replace(/&sbquo;/g, '‚')
+    .replace(/&laquo;/g, '«').replace(/&raquo;/g, '»')
+    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&hellip;/g, '…')
+    .replace(/&#(\d+);/g, (_, n) => { const c = parseInt(n, 10); return c === 0xAD ? '' : String.fromCharCode(c); })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { const c = parseInt(h, 16); return c === 0xAD ? '' : String.fromCharCode(c); });
+}
+
 const cookieStore = {};
 function gd(url) { try { return new URL(url).hostname; } catch { return ''; } }
 function gc(d) { return cookieStore[d] || ''; }
@@ -145,11 +162,7 @@ export async function POST(request) {
     const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
     let m;
     while ((m = pRegex.exec(block)) !== null) {
-      const text = m[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ').trim();
+      const text = decodeEntities(m[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
       if (text.length > 25) rawParagraphs.push(text);
     }
 

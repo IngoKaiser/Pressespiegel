@@ -167,10 +167,25 @@ function findImgInHtml(html) {
   return null;
 }
 
+function decodeEntities(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&shy;/g, '')
+    .replace(/&ldquo;/g, '"').replace(/&rdquo;/g, '"').replace(/&bdquo;/g, '„')
+    .replace(/&lsquo;/g, ''').replace(/&rsquo;/g, ''').replace(/&sbquo;/g, '‚')
+    .replace(/&laquo;/g, '«').replace(/&raquo;/g, '»')
+    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&hellip;/g, '…')
+    .replace(/&#(\d+);/g, (_, n) => { const c = parseInt(n, 10); return c === 0xAD ? '' : String.fromCharCode(c); })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { const c = parseInt(h, 16); return c === 0xAD ? '' : String.fromCharCode(c); });
+}
+
 function cleanSummary(text) {
-  return text.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
-    .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 350);
+  return decodeEntities(text.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim().slice(0, 350);
 }
 
 async function fetchRSS(feedUrl, sourceUrl) {
