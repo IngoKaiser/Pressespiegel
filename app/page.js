@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const SK = 'ps-src-v5', CK = 'ps-cache-v5', LK = 'ps-lang', TK = 'ps-trans', BK = 'ps-broken', TTL = 20 * 60 * 1000;
+const SK = 'ps-src-v5', CK = 'ps-cache-v5', LK = 'ps-lang', TK = 'ps-trans', BK = 'ps-broken', PK = 'ps-hide-paywall', TTL = 20 * 60 * 1000;
 const uid = () => Math.random().toString(36).slice(2, 9);
 const dom = (u) => { try { return new URL(u).hostname.replace('www.', ''); } catch { return u; } };
 const norm = (u) => u.startsWith('http') ? u : 'https://' + u;
@@ -194,8 +194,8 @@ function Modal({ onAdd, onClose }) {
   );
 }
 
-// ─── Settings Drawer (language only) ───
-function SettingsDrawer({ langMode, onLangChange, onClose }) {
+// ─── Settings Drawer ───
+function SettingsDrawer({ langMode, onLangChange, hidePaywall, onHidePaywallChange, onClose }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', backdropFilter: 'blur(6px)', zIndex: 9998, display: 'flex', justifyContent: 'flex-end' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: '#faf9f7', width: 'min(300px, 85vw)', height: '100%', padding: '28px 22px', boxShadow: '-8px 0 40px rgba(0,0,0,0.1)', overflowY: 'auto' }}>
@@ -221,6 +221,18 @@ function SettingsDrawer({ langMode, onLangChange, onClose }) {
             </button>
           );
         })}
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, color: '#999', marginBottom: 14 }}>Inhalte</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: '#f5f5f3' }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: '#333' }}>Abo-Artikel ausblenden</div>
+              <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>Bezahlinhalte nicht anzeigen</div>
+            </div>
+            <button onClick={() => onHidePaywallChange(!hidePaywall)} style={{ width: 42, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: hidePaywall ? '#111' : '#ddd', position: 'relative', transition: 'background 0.2s', flexShrink: 0, padding: 0 }}>
+              <div style={{ width: 18, height: 18, borderRadius: 9, background: '#fff', position: 'absolute', top: 3, left: hidePaywall ? 21 : 3, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -296,6 +308,7 @@ export default function Home() {
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [langMode, setLangMode] = useState('off');
+  const [hidePaywall, setHidePaywall] = useState(false);
   const [transCache, setTransCache] = useState({});
   const [modal, setModal] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -315,6 +328,7 @@ export default function Home() {
     try { const c = localStorage.getItem(CK); if (c) { const { d, t } = JSON.parse(c); if (Date.now() - t < TTL) setArticles(d); } } catch {}
     try { const b = localStorage.getItem(BK); if (b) setBrokenIds(new Set(JSON.parse(b))); } catch {}
     try { const l = localStorage.getItem(LK); if (l) setLangMode(l); } catch {}
+    try { const p = localStorage.getItem(PK); if (p) setHidePaywall(JSON.parse(p)); } catch {}
     try { const t = localStorage.getItem(TK); if (t) setTransCache(JSON.parse(t)); } catch {}
     setReady(true);
   }, []);
@@ -324,6 +338,7 @@ export default function Home() {
   useEffect(() => { if (ready && Object.keys(articles).length) try { localStorage.setItem(CK, JSON.stringify({ d: articles, t: Date.now() })); } catch {} }, [articles, ready]);
   useEffect(() => { if (brokenIds.size > 0) try { localStorage.setItem(BK, JSON.stringify([...brokenIds])); } catch {} }, [brokenIds]);
   useEffect(() => { if (ready) try { localStorage.setItem(LK, langMode); } catch {} }, [langMode, ready]);
+  useEffect(() => { if (ready) try { localStorage.setItem(PK, JSON.stringify(hidePaywall)); } catch {} }, [hidePaywall, ready]);
   useEffect(() => { if (Object.keys(transCache).length) try { localStorage.setItem(TK, JSON.stringify(transCache)); } catch {} }, [transCache]);
 
   // Auto-dismiss errors
@@ -402,7 +417,7 @@ export default function Home() {
   const normTitle = (t) => t.toLowerCase().replace(/[^a-z\u00e4\u00f6\u00fc\u00df0-9]/g, '').slice(0, 60);
   const allArticles = (() => {
     const sorted = Object.values(articles).flat()
-      .filter(a => !brokenIds.has(a.id) && !brokenIds.has(a.url))
+      .filter(a => !brokenIds.has(a.id) && !brokenIds.has(a.url) && !(hidePaywall && a.paywall))
       .filter(a => activeFilter === 'all' || a.sourceId === activeFilter)
       .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
     const seen = new Set();
@@ -492,7 +507,7 @@ export default function Home() {
       </div>
 
       {modal && <Modal onAdd={add} onClose={() => setModal(false)} />}
-      {settingsOpen && <SettingsDrawer langMode={langMode} onLangChange={setLangMode} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDrawer langMode={langMode} onLangChange={setLangMode} hidePaywall={hidePaywall} onHidePaywallChange={setHidePaywall} onClose={() => setSettingsOpen(false)} />}
       {sourcesOpen && <SourcesDrawer sources={sources} onReorder={setSources} onRemove={remove} onClose={() => setSourcesOpen(false)} />}
     </>
   );
