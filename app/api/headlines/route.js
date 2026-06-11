@@ -100,11 +100,11 @@ function isPaywall(item, domain) {
   return false;
 }
 
-function isToday(dateStr) {
+function isRecent(dateStr) {
   if (!dateStr) return true;
   const d = new Date(dateStr);
-  const now = new Date();
-  return d.toDateString() === now.toDateString();
+  if (isNaN(d.getTime())) return true;
+  return Date.now() - d.getTime() < 36 * 60 * 60 * 1000;
 }
 
 function extractImage(item) {
@@ -192,10 +192,10 @@ async function fetchRSS(feedUrl, sourceUrl) {
   const feed = await parser.parseURL(feedUrl);
   const d = getDomain(sourceUrl);
   return (feed.items || [])
-    .filter((item) => isToday(item.pubDate || item.isoDate))
+    .filter((item) => isRecent(item.pubDate || item.isoDate))
     .slice(0, 25)
     .map((item) => ({
-      title: item.title || 'Ohne Titel',
+      title: decodeEntities(item.title || 'Ohne Titel'),
       summary: cleanSummary(item.contentSnippet || item.content || item.description || ''),
       url: item.link || item.guid || sourceUrl,
       paywall: isPaywall(item, d),
