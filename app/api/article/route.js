@@ -7,10 +7,10 @@ function decodeEntities(str) {
     .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, ' ')
     .replace(/&shy;/g, '')
-    .replace(/&ldquo;/g, '“').replace(/&rdquo;/g, '”').replace(/&bdquo;/g, '„')
-    .replace(/&lsquo;/g, '‘').replace(/&rsquo;/g, '’').replace(/&sbquo;/g, '‚')
-    .replace(/&laquo;/g, '«').replace(/&raquo;/g, '»')
-    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&hellip;/g, '…')
+    .replace(/&ldquo;/g, '\u201C').replace(/&rdquo;/g, '\u201D').replace(/&bdquo;/g, '\u201E')
+    .replace(/&lsquo;/g, '\u2018').replace(/&rsquo;/g, '\u2019').replace(/&sbquo;/g, '\u201A')
+    .replace(/&laquo;/g, '\u00AB').replace(/&raquo;/g, '\u00BB')
+    .replace(/&mdash;/g, '\u2014').replace(/&ndash;/g, '\u2013').replace(/&hellip;/g, '\u2026')
     .replace(/&#(\d+);/g, (_, n) => { const c = parseInt(n, 10); return c === 0xAD ? '' : String.fromCharCode(c); })
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => { const c = parseInt(h, 16); return c === 0xAD ? '' : String.fromCharCode(c); });
 }
