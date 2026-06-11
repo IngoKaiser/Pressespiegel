@@ -49,6 +49,7 @@ function FeedCard({ article, langMode, transCache, onClick }) {
           <img src={fav(dom(article.sourceUrl))} alt="" width={12} height={12} style={{ borderRadius: 2, opacity: 0.7 }} onError={(e) => { e.target.style.display = 'none'; }} />
           <span>{article.sourceName}</span>
           {article.pubDate && <><span style={{ opacity: 0.4 }}>|</span><span>{new Date(article.pubDate).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span></>}
+          {article.paywall && <span style={{ fontSize: 9, fontWeight: 700, color: '#bbb', border: '1px solid #e5e5e5', borderRadius: 2, padding: '0 4px', lineHeight: '14px', letterSpacing: 0.4, flexShrink: 0 }}>ABO</span>}
         </div>
         <h3 style={{ margin: 0, fontSize: 'clamp(15px, 2.5vw, 17px)', fontWeight: 700, lineHeight: 1.3, fontFamily: "'Libre Baskerville', serif", color: '#111', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{title}</h3>
         {summary && <p style={{ margin: 0, fontSize: 'clamp(13px, 2vw, 14px)', lineHeight: 1.55, color: '#666', display: '-webkit-box', WebkitLineClamp: hasImg ? 3 : 4, WebkitBoxOrient: 'vertical', overflow: 'hidden', flex: 1 }}>{summary}</p>}
@@ -73,6 +74,7 @@ function Reader({ article, langMode, transCache, onBack, onMarkBroken, onCacheTr
 
   // Fetch article content
   useEffect(() => {
+    if (article.paywall) { setError('paywall'); setLoading(false); return; }
     let c = false;
     (async () => {
       try {
@@ -400,7 +402,7 @@ export default function Home() {
   const normTitle = (t) => t.toLowerCase().replace(/[^a-z\u00e4\u00f6\u00fc\u00df0-9]/g, '').slice(0, 60);
   const allArticles = (() => {
     const sorted = Object.values(articles).flat()
-      .filter(a => !a.paywall && !brokenIds.has(a.id) && !brokenIds.has(a.url))
+      .filter(a => !brokenIds.has(a.id) && !brokenIds.has(a.url))
       .filter(a => activeFilter === 'all' || a.sourceId === activeFilter)
       .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
     const seen = new Set();

@@ -78,7 +78,21 @@ const REMOVE_IF_CONTAINS = [
   /Alle Rechte vorbehalten/i,
   /Mehr lesen über/i,
   /Feedback.*an.*Redaktion/i,
+  /Lesen Sie hier/i,
+  /die ganze Geschichte/i,
+  /SPIEGEL bei Google/i,
+  /Nachrichten-Magazin für Kinder/i,
+  /Liebe Eltern,/i,
+  /(X\.com|Twitter).{0,50}(Facebook|WhatsApp|E-Mail|Messenger)/i,
+  /^(X\.com|Facebook|E-Mail|WhatsApp|Messenger|LinkedIn|Pinterest|Xing)\s/i,
 ];
+
+function isLinkHeavy(rawHtml) {
+  const linkText = (rawHtml.match(/<a[^>]*>([\s\S]*?)<\/a>/gi) || [])
+    .map(a => a.replace(/<[^>]+>/g, '').trim()).join('').length;
+  const totalText = rawHtml.replace(/<[^>]+>/g, '').trim().length;
+  return totalText > 20 && linkText / totalText > 0.5;
+}
 
 function cleanParagraphs(paragraphs) {
   return paragraphs.filter(p => {
@@ -162,6 +176,7 @@ export async function POST(request) {
     const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
     let m;
     while ((m = pRegex.exec(block)) !== null) {
+      if (isLinkHeavy(m[1])) continue;
       const text = decodeEntities(m[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
       if (text.length > 25) rawParagraphs.push(text);
     }
