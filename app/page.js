@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const SK = 'ps-src-v5', CK = 'ps-cache-v5', LK = 'ps-lang', TK = 'ps-trans', BK = 'ps-broken', PK = 'ps-hide-paywall', TTL = 20 * 60 * 1000;
+const SK = 'ps-src-v5', CK = 'ps-cache-v5', LK = 'ps-lang', TK = 'ps-trans', BK = 'ps-broken', PK = 'ps-hide-paywall', PWK = 'ps-paywall-urls', TTL = 20 * 60 * 1000;
 const uid = () => Math.random().toString(36).slice(2, 9);
 const dom = (u) => { try { return new URL(u).hostname.replace('www.', ''); } catch { return u; } };
 const norm = (u) => u.startsWith('http') ? u : 'https://' + u;
@@ -27,7 +27,7 @@ async function translateText(mode, type, text) {
 }
 
 // ─── Card ───
-function FeedCard({ article, langMode, transCache, onClick }) {
+function FeedCard({ article, langMode, transCache, paywallUrls, onClick }) {
   const [h, setH] = useState(false);
   const hasImg = !!article.image;
   const cacheKey = `${article.url}:${langMode}`;
@@ -49,7 +49,7 @@ function FeedCard({ article, langMode, transCache, onClick }) {
           <img src={fav(dom(article.sourceUrl))} alt="" width={12} height={12} style={{ borderRadius: 2, opacity: 0.7 }} onError={(e) => { e.target.style.display = 'none'; }} />
           <span>{article.sourceName}</span>
           {article.pubDate && <><span style={{ opacity: 0.4 }}>|</span><span>{new Date(article.pubDate).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span></>}
-          {article.paywall && <span style={{ fontSize: 9, fontWeight: 700, color: '#bbb', border: '1px solid #e5e5e5', borderRadius: 2, padding: '0 4px', lineHeight: '14px', letterSpacing: 0.4, flexShrink: 0 }}>ABO</span>}
+          {(article.paywall || paywallUrls?.has(article.url)) && <span style={{ fontSize: 9, fontWeight: 700, color: '#bbb', border: '1px solid #e5e5e5', borderRadius: 2, padding: '0 4px', lineHeight: '14px', letterSpacing: 0.4, flexShrink: 0 }}>ABO</span>}
         </div>
         <h3 style={{ margin: 0, fontSize: 'clamp(15px, 2.5vw, 17px)', fontWeight: 700, lineHeight: 1.3, fontFamily: "'Libre Baskerville', serif", color: '#111', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{title}</h3>
         {summary && <p style={{ margin: 0, fontSize: 'clamp(13px, 2vw, 14px)', lineHeight: 1.55, color: '#666', display: '-webkit-box', WebkitLineClamp: hasImg ? 3 : 4, WebkitBoxOrient: 'vertical', overflow: 'hidden', flex: 1 }}>{summary}</p>}
@@ -59,7 +59,7 @@ function FeedCard({ article, langMode, transCache, onClick }) {
 }
 
 // ─── Reader ───
-function Reader({ article, langMode, transCache, onBack, onMarkBroken, onCacheTrans }) {
+function Reader({ article, langMode, transCache, onBack, onMarkBroken, onMarkPaywall, paywallUrls, onCacheTrans }) {
   const [content, setContent] = useState(null);
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +74,7 @@ function Reader({ article, langMode, transCache, onBack, onMarkBroken, onCacheTr
 
   // Fetch article content
   useEffect(() => {
-    if (article.paywall) { setError('paywall'); setLoading(false); return; }
+    if (article.paywall || paywallUrls?.has(article.url)) { setError('paywall'); setLoading(false); return; }
     let c = false;
     (async () => {
       try {
@@ -83,9 +83,12 @@ function Reader({ article, langMode, transCache, onBack, onMarkBroken, onCacheTr
         if (!c) {
           if (d.images) setImages(d.images);
           if (d.error) setError(d.error);
-          else if (d.content === 'PAYWALL' || d.content === 'NOT_EXTRACTABLE') {
+          else if (d.content === 'PAYWALL') {
+            onMarkPaywall(article.url);
+            setError('paywall');
+          } else if (d.content === 'NOT_EXTRACTABLE') {
             onMarkBroken(article.id);
-            setError(d.content === 'PAYWALL' ? 'paywall' : 'not_extractable');
+            setError('not_extractable');
           } else setContent(d.content);
           setLoading(false);
         }
@@ -304,6 +307,7 @@ export default function Home() {
   const [sources, setSources] = useState([]);
   const [articles, setArticles] = useState({});
   const [brokenIds, setBrokenIds] = useState(new Set());
+  const [paywallUrls, setPaywallUrls] = useState(new Set());
   const [activeFilter, setActiveFilter] = useState('all');
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
@@ -327,6 +331,7 @@ export default function Home() {
     try { const s = localStorage.getItem(SK); if (s) setSources(JSON.parse(s)); } catch {}
     try { const c = localStorage.getItem(CK); if (c) { const { d, t } = JSON.parse(c); if (Date.now() - t < TTL) setArticles(d); } } catch {}
     try { const b = localStorage.getItem(BK); if (b) setBrokenIds(new Set(JSON.parse(b))); } catch {}
+    try { const pw = localStorage.getItem(PWK); if (pw) setPaywallUrls(new Set(JSON.parse(pw))); } catch {}
     try { const l = localStorage.getItem(LK); if (l) setLangMode(l); } catch {}
     try { const p = localStorage.getItem(PK); if (p) setHidePaywall(JSON.parse(p)); } catch {}
     try { const t = localStorage.getItem(TK); if (t) setTransCache(JSON.parse(t)); } catch {}
@@ -337,6 +342,7 @@ export default function Home() {
   useEffect(() => { if (ready) try { localStorage.setItem(SK, JSON.stringify(sources)); } catch {} }, [sources, ready]);
   useEffect(() => { if (ready && Object.keys(articles).length) try { localStorage.setItem(CK, JSON.stringify({ d: articles, t: Date.now() })); } catch {} }, [articles, ready]);
   useEffect(() => { if (brokenIds.size > 0) try { localStorage.setItem(BK, JSON.stringify([...brokenIds])); } catch {} }, [brokenIds]);
+  useEffect(() => { if (paywallUrls.size > 0) try { localStorage.setItem(PWK, JSON.stringify([...paywallUrls])); } catch {} }, [paywallUrls]);
   useEffect(() => { if (ready) try { localStorage.setItem(LK, langMode); } catch {} }, [langMode, ready]);
   useEffect(() => { if (ready) try { localStorage.setItem(PK, JSON.stringify(hidePaywall)); } catch {} }, [hidePaywall, ready]);
   useEffect(() => { if (Object.keys(transCache).length) try { localStorage.setItem(TK, JSON.stringify(transCache)); } catch {} }, [transCache]);
@@ -410,6 +416,9 @@ export default function Home() {
     const a = Object.values(articles).flat().find(x => x.id === id);
     setBrokenIds(p => { const n = new Set(p); n.add(id); if (a?.url) n.add(a.url); return n; });
   };
+  const markPaywall = useCallback((url) => {
+    if (url) setPaywallUrls(p => { const n = new Set(p); n.add(url); return n; });
+  }, []);
   const openArticle = (a) => { if (contentRef.current) setScrollY(contentRef.current.scrollTop); setReader(a); };
   const closeReader = () => { setReader(null); requestAnimationFrame(() => { if (contentRef.current) contentRef.current.scrollTop = scrollY; }); };
 
@@ -417,7 +426,7 @@ export default function Home() {
   const normTitle = (t) => t.toLowerCase().replace(/[^a-z\u00e4\u00f6\u00fc\u00df0-9]/g, '').slice(0, 60);
   const allArticles = (() => {
     const sorted = Object.values(articles).flat()
-      .filter(a => !brokenIds.has(a.id) && !brokenIds.has(a.url) && !(hidePaywall && a.paywall))
+      .filter(a => !brokenIds.has(a.id) && !brokenIds.has(a.url) && !(hidePaywall && (a.paywall || paywallUrls.has(a.url))))
       .filter(a => activeFilter === 'all' || a.sourceId === activeFilter)
       .sort((a, b) => (b.pubDate ? new Date(b.pubDate).getTime() : 0) - (a.pubDate ? new Date(a.pubDate).getTime() : 0));
     const seen = new Set();
@@ -437,7 +446,7 @@ export default function Home() {
     <>
       <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet" />
       <style>{`@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}`}</style>
-      <Reader article={reader} langMode={langMode} transCache={transCache} onBack={closeReader} onMarkBroken={markBroken} onCacheTrans={cacheTrans} />
+      <Reader article={reader} langMode={langMode} transCache={transCache} onBack={closeReader} onMarkBroken={markBroken} onMarkPaywall={markPaywall} paywallUrls={paywallUrls} onCacheTrans={cacheTrans} />
     </>
   );
 
@@ -498,7 +507,7 @@ export default function Home() {
             )}
             {allArticles.length > 0 && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 360px), 1fr))', gap: 'clamp(10px, 2vw, 16px)' }}>
-                {allArticles.map(a => <FeedCard key={a.id} article={a} langMode={langMode} transCache={transCache} onClick={() => openArticle(a)} />)}
+                {allArticles.map(a => <FeedCard key={a.id} article={a} langMode={langMode} transCache={transCache} paywallUrls={paywallUrls} onClick={() => openArticle(a)} />)}
               </div>
             )}
             {allArticles.length > 0 && <div style={{ textAlign: 'center', padding: '24px 0 48px', color: '#ccc', fontSize: 12 }}>{allArticles.length} Artikel</div>}
