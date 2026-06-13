@@ -79,6 +79,18 @@ const FEEDS = {
 
 const PAYWALL_PATTERNS = /\b(S\+|A\+|Z\+|F\+|SZ[\s-]*Plus|SPIEGEL[\s-]*\+|SPIEGEL\s*Plus|ZEIT\+|BILDplus|WELTplus|FAZ\+|Handelsblatt[\s-]*Premium)\b/i;
 
+const PAYWALL_PHRASES_RSS = [
+  'für abonnenten', 'nur für abonnenten', 'exklusiv für abonnenten',
+  'jetzt abonnieren', 'abo bestellen', 'abonnieren sie',
+  'werden sie abonnent', 'jetzt abonnent',
+  'digital-abo', 'digitalabo', 'print-abo',
+  'lesen sie weiter mit', 'weiter lesen mit',
+  'anmelden und weiterlesen', 'jetzt weiterlesen',
+  'registrieren sie sich', 'melden sie sich an',
+  'dieser artikel ist für', 'diesen artikel lesen sie mit',
+  'um diesen artikel zu lesen',
+];
+
 function getDomain(url) { try { return new URL(url).hostname.replace('www.', ''); } catch { return ''; } }
 
 function findFeed(url) {
@@ -93,6 +105,11 @@ function isPaywall(item, domain) {
   const link = item.link || '';
   if (PAYWALL_PATTERNS.test(all)) return true;
   if (/\/(plus|premium)\//i.test(link)) return true;
+
+  // Check all available RSS text fields (contentEncoded may contain paywall phrases)
+  const fullText = `${all} ${item.contentEncoded || ''} ${item.description || ''}`.toLowerCase();
+  if (PAYWALL_PHRASES_RSS.some(p => fullText.includes(p))) return true;
+
   if (domain.includes('spiegel.de') && (/spiegel\s*\+|S\+/i.test(all) || link.includes('-plus-'))) return true;
   if (domain.includes('abendblatt.de') && /A\+|Abendblatt\s*Plus/i.test(all)) return true;
   if (domain.includes('zeit.de') && /Z\+|ZEIT\s*\+/i.test(all)) return true;

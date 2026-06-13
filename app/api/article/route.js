@@ -38,11 +38,20 @@ const PAYWALL_PHRASES = [
   'Jetzt weiterlesen', 'Registrieren Sie sich',
   'Melden Sie sich an', 'Anmelden und weiterlesen',
   'Dieser Artikel ist für Abonnenten',
+  'Dieser Artikel ist exklusiv für Abonnenten',
   'Um diesen Artikel zu lesen',
   'Diesen Artikel lesen Sie mit',
   'Bereits Abonnent?', 'Print-Abo',
   'Digital-Zugang bestellen',
   'Ihr Heimathafen für lokale Nachrichten',
+  'Werden Sie Abonnent',
+  'Jetzt Abonnent werden',
+  'Exklusiv für Abonnenten',
+  'Nur für Abonnenten',
+  'Für Abonnenten',
+  'Jetzt abonnieren',
+  'Lesen Sie hier weiter',
+  'Weiter lesen mit',
 ];
 
 // Paragraphs containing these get removed entirely
