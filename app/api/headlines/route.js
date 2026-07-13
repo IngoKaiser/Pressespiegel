@@ -53,8 +53,8 @@ const FEEDS = {
   'netzpolitik.org':'https://netzpolitik.org/feed/',
   'sport1.de':'https://www.sport1.de/rss/allenews.xml',
   'kicker.de':'https://rss.kicker.de/news/aktuell',
-  'der-postillon.com':'https://feeds.feedburner.com/blogspot/rkEL',
-  'postillon.com':'https://feeds.feedburner.com/blogspot/rkEL',
+  'der-postillon.com':'https://follow.it/der-postillon-abo/rss',
+  'postillon.com':'https://follow.it/der-postillon-abo/rss',
   'titanic-magazin.de':'https://www.titanic-magazin.de/feeds/rss/',
   'spektrum.de':'https://www.spektrum.de/alias/rss/spektrum-de-rss-feed/996406',
   'nzz.ch':'https://www.nzz.ch/recent.rss',
@@ -205,6 +205,23 @@ function cleanSummary(text) {
   return decodeEntities(text.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim().slice(0, 350);
 }
 
+function extractArticleUrl(item, sourceUrl) {
+  const sourceDomain = getDomain(sourceUrl);
+  const link = item.link || item.guid || '';
+  // If the link is already on the source domain, use it
+  if (link && getDomain(link) === sourceDomain) return link;
+  // Otherwise (e.g. follow.it tracking URLs), find the real URL in description HTML
+  const desc = item.description || item.contentEncoded || item['content:encoded'] || '';
+  const m = desc.match(/href=["'](https?:\/\/[^"']*)/i);
+  if (m) {
+    try {
+      const url = new URL(m[1]);
+      if (url.hostname.includes(sourceDomain) || sourceDomain.includes(url.hostname.replace('www.', ''))) return m[1];
+    } catch {}
+  }
+  return link || sourceUrl;
+}
+
 async function fetchRSS(feedUrl, sourceUrl) {
   const feed = await parser.parseURL(feedUrl);
   const d = getDomain(sourceUrl);
@@ -214,7 +231,7 @@ async function fetchRSS(feedUrl, sourceUrl) {
     .map((item) => ({
       title: decodeEntities(item.title || 'Ohne Titel'),
       summary: cleanSummary(item.contentSnippet || item.content || item.description || ''),
-      url: item.link || item.guid || sourceUrl,
+      url: extractArticleUrl(item, sourceUrl),
       paywall: isPaywall(item, d),
       pubDate: item.pubDate || item.isoDate || null,
       image: extractImage(item),
